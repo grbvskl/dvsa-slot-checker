@@ -10,8 +10,7 @@ from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
 from selenium.webdriver.chrome.options import Options
 from selenium.webdriver.chrome.service import Service
-from selenium.common.exceptions import TimeoutException, NoSuchElementException
-from webdriver_manager.chrome import ChromeDriverManager
+from selenium.common.exceptions import TimeoutException
 
 load_dotenv()
 
@@ -20,11 +19,12 @@ BOOKING_REFERENCE = os.getenv("DVSA_BOOKING_REFERENCE")
 TELEGRAM_TOKEN    = os.getenv("TELEGRAM_BOT_TOKEN")
 TELEGRAM_CHAT_ID  = os.getenv("TELEGRAM_CHAT_ID")
 CHECK_INTERVAL    = int(os.getenv("CHECK_INTERVAL_SECONDS", "300"))
+TEST_CENTRE       = os.getenv("TEST_CENTRE", "")
 
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s [%(levelname)s] %(message)s",
-    handlers=[logging.FileHandler("dvsa_checker.log"), logging.StreamHandler()]
+    handlers=[logging.StreamHandler()]
 )
 log = logging.getLogger(__name__)
 
@@ -48,7 +48,18 @@ def create_driver():
     options.add_argument("--disable-blink-features=AutomationControlled")
     options.add_experimental_option("excludeSwitches", ["enable-automation"])
     options.add_argument("user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
-    service = Service(ChromeDriverManager().install())
+
+    # Use system chromium if available (Railway), otherwise let webdriver-manager handle it
+    chromium_path = "/usr/bin/chromium"
+    chromedriver_path = "/usr/bin/chromedriver"
+
+    if os.path.exists(chromium_path):
+        options.binary_location = chromium_path
+        service = Service(chromedriver_path)
+    else:
+        from webdriver_manager.chrome import ChromeDriverManager
+        service = Service(ChromeDriverManager().install())
+
     return webdriver.Chrome(service=service, options=options)
 
 def check_slots():
@@ -85,45 +96,52 @@ def check_slots():
         for el in slot_elements:
             slot_text = el.text.strip() or el.get_attribute("data-date") or el.get_attribute("aria-label")
             if slot_text:
+                if TEST_CENTRE and TEST_CENTRE.lower() not in slot_text.lower():
+                    continue
                 slots_found.append(slot_text)
 
     except Exception as e:
         log.error(f"Error during slot check: {e}")
         try:
             driver.save_screenshot("debug_screenshot.png")
-            log.info("Screenshot saved as debug_screenshot.png")
         except:
             pass
     finally:
         driver.quit()
     return slots_found
 
-def test_telegram():
-    log.info("Testing Telegram...")
-    send_telegram("🤖 <b>Test message!</b>\nIf you see this, Telegram is working perfectly ✅")
-
 def main():
     log.info("🚗 DVSA Slot Checker started!")
-    send_telegram("🚗 <b>DVSA Slot Checker started!</b>\nI'll notify you when new slots appear.")
+    send_telegram("🚗 <b>DVSA Slot Checker started!</b>\nI'll notify you the moment a new slot appears.")
     last_slots = set()
+    check_count = 0
+
     while True:
         try:
             slots = check_slots()
+            check_count += 1
+
             if slots:
                 new_slots = set(slots) - last_slots
                 if new_slots:
                     log.info(f"🎉 NEW SLOTS FOUND: {new_slots}")
-                    msg = "🎉 <b>New DVSA test slots available!</b>\n\n" + "\n".join(f"📅 {s}" for s in sorted(new_slots)) + "\n\n👉 Book now: https://driverpracticaltest.dvsa.gov.uk/login"
+                    msg = "🎉 <b>New DVSA slot available!</b>\n\n" + "\n".join(f"📅 {s}" for s in sorted(new_slots)) + "\n\n👉 <a href='https://driverpracticaltest.dvsa.gov.uk/login'>Book now!</a>"
                     send_telegram(msg)
                     last_slots = set(slots)
                 else:
                     log.info(f"No new slots. {len(slots)} previously known.")
             else:
-                log.info("No slots found this check.")
+                log.info(f"No slots found. (Check #{check_count})")
                 last_slots = set()
+
+            # Daily heartbeat every 288 checks (every 24hrs at 5min intervals)
+            if check_count % 288 == 0:
+                send_telegram(f"💓 Still running! Checked {check_count} times. No slots yet.")
+
         except Exception as e:
             log.error(f"Unexpected error: {e}")
-        log.info(f"⏳ Sleeping {CHECK_INTERVAL}s until next check...")
+
+        log.info(f"⏳ Sleeping {CHECK_INTERVAL}s...")
         time.sleep(CHECK_INTERVAL)
 
 if __name__ == "__main__":
