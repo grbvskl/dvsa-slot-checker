@@ -2,7 +2,6 @@ import os
 import time
 import logging
 import requests
-from datetime import datetime
 from dotenv import load_dotenv
 from selenium import webdriver
 from selenium.webdriver.common.by import By
@@ -44,12 +43,14 @@ def create_driver():
     options.add_argument("--headless")
     options.add_argument("--no-sandbox")
     options.add_argument("--disable-dev-shm-usage")
+    options.add_argument("--disable-gpu")
+    options.add_argument("--disable-software-rasterizer")
+    options.add_argument("--disable-extensions")
+    options.add_argument("--single-process")
     options.add_argument("--window-size=1920,1080")
     options.add_argument("--disable-blink-features=AutomationControlled")
-    options.add_experimental_option("excludeSwitches", ["enable-automation"])
     options.add_argument("user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
 
-    # Use system chromium if available (Railway), otherwise let webdriver-manager handle it
     chromium_path = "/usr/bin/chromium"
     chromedriver_path = "/usr/bin/chromedriver"
 
@@ -88,7 +89,6 @@ def check_slots():
                 wait.until(EC.element_to_be_clickable((By.PARTIAL_LINK_TEXT, "Change"))).click()
             except TimeoutException:
                 log.warning("Could not find earlier/reschedule button.")
-                driver.save_screenshot("debug_screenshot.png")
                 return []
 
         time.sleep(3)
@@ -102,10 +102,6 @@ def check_slots():
 
     except Exception as e:
         log.error(f"Error during slot check: {e}")
-        try:
-            driver.save_screenshot("debug_screenshot.png")
-        except:
-            pass
     finally:
         driver.quit()
     return slots_found
@@ -120,7 +116,6 @@ def main():
         try:
             slots = check_slots()
             check_count += 1
-
             if slots:
                 new_slots = set(slots) - last_slots
                 if new_slots:
@@ -134,7 +129,6 @@ def main():
                 log.info(f"No slots found. (Check #{check_count})")
                 last_slots = set()
 
-            # Daily heartbeat every 288 checks (every 24hrs at 5min intervals)
             if check_count % 288 == 0:
                 send_telegram(f"💓 Still running! Checked {check_count} times. No slots yet.")
 
